@@ -1,5 +1,5 @@
-from email import utils
 import smartpy as sp
+
 FA2 = sp.io.import_script_from_url("https://smartpy.io/templates/fa2_lib.py")
 Utils = sp.io.import_script_from_url(
     "https://raw.githubusercontent.com/RomarQ/tezos-sc-utils/main/smartpy/utils.py")
@@ -15,6 +15,42 @@ def string_of_nat(params):
         res.value.push(c[x.value % 10])
         x.value //= 10
     return sp.concat(res.value)
+
+
+class MultiAdmin:
+    """(Mixin) Provide the basics for having an administrator in the contract.
+
+    Adds an `administrator` attribute in the storage record. Provides a
+    `set_administrator` entrypoint. Provides a `is_administrator` meta-
+    programming function.
+    """
+
+    def __init__(self, administrators=[]):
+        self.update_initial_storage(administrators=administrators)
+
+    def is_administrator(self, sender):
+        result = sp.local('result', False)
+        with sp.for_("administrator", self.data.administrators) as administrator:
+            with sp.if_(sp.fst(administrator) == sender):
+                result.value = True
+        sp.trace(result.value)
+        return result.value
+
+    @sp.entry_point
+    def set_administrators(self, params):
+
+        sp.set_type(
+            params,
+            sp.TList(
+                sp.TPair(
+                    sp.TAddress,
+                    sp.TNat
+                )
+            ),
+        )
+        """(Admin only) Set the contract administrator."""
+        sp.verify(self.is_administrator(sp.sender), message="FA2_NOT_ADMIN")
+        self.data.administrators = params
 
 
 class PublicMintNft(sp.Contract):
@@ -64,10 +100,10 @@ class PublicMintNft(sp.Contract):
         # sp.verify(self.is_administrator(sp.sender), "FA2_NOT_ADMIN")
 
         with sp.if_(self.data.whitelist.contains(sp.sender)):
-            sp.verify(sp.amount > sp.tez(15),
+            sp.verify(sp.amount >= sp.tez(15),
                       "INSUFFICIENT AMOUNT OF TEZOS - WHITELISTED")
         with sp.else_():
-            sp.verify(sp.amount > sp.tez(20),
+            sp.verify(sp.amount >= sp.tez(20),
                       "INSUFFICIENT AMOUNT OF TEZOS - NOT WHITELISTED")
 
         with sp.for_("action", batch) as action:
@@ -95,11 +131,39 @@ class NftWithAdmin(FA2.Admin, FA2.WithdrawMutez, PublicMintNft, FA2.Fa2Nft):
         PublicMintNft.__init__(self)
 
 
+class VaultContract(MultiAdmin, sp.Contract):
+    def __init__(self, administrators, **kwargs):
+        MultiAdmin.__init__(self, administrators)
+
+    @sp.entry_point
+    def default(self):
+        pass
+
+    @sp.entry_point
+    def distribute_mutez(self):
+        """(Admin only) Transfer `amount` mutez to `destination`."""
+        sp.verify(self.is_administrator(sp.sender), message="FA2_NOT_ADMIN")
+        _current_balance = sp.balance
+
+        with sp.for_("administrator", self.data.administrators) as administrator:
+            sp.send(sp.fst(administrator),
+                    sp.split_tokens(_current_balance, sp.snd(administrator), 100))
+
+        # sp.send(self.data.administrators[1],
+        #         sp.mutez(_current_balance - _current_balance * 5 / 100))
+
+    @sp.offchain_view()
+    def some_computation(self, sender):
+        sp.result(self.is_administrator(sender))
+
+
 tok0_md = sp.map(l={
     "": sp.utils.bytes_of_string(
         "ipfs://QmTq1FXht8jFc9CaW2j2hJ3bMjLqgAJhr3bxjcJ723TaHT"
     ),
 })
+
+
 tok1_md = FA2.make_metadata(name="Token One", decimals=1, symbol="Tok1")
 tok2_md = FA2.make_metadata(name="Token Two", decimals=1, symbol="Tok2")
 TOKEN_METADATA = [tok0_md, tok1_md, tok2_md]
@@ -116,30 +180,49 @@ cat = sp.test_account("cat")
 def test():
     sc = sp.test_scenario()
 
-    c1 = NftWithAdmin(
-        admin=sp.address("tz1XSBR9VJ1ggCEy9QHkEUXXsgZhwmzxm7fh"),
-        metadata=METADATA,
-        token_metadata=[],
-    )
-    #  Below line must be written before contract interaction
-    sc += c1
+    # c1 = NftWithAdmin(
+    #     admin=sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"),
+    #     metadata=METADATA,
+    #     token_metadata=[],
+    # )
+    # sc += c1
+    # c1.test_string_of_nat(12345678901234)
+    # sc.show(c1.data)
 
-    c1.test_string_of_nat(12345678901234)
-    sc.show(c1.data)
-    # c1.toggleWhitelist(sp.address("tz1XSBR9VJ1ggCEy9QHkEUXXsgZhwmzxm7fh")).run(
-    #     sender=sp.address("tz1XSBR9VJ1ggCEy9QHkEUXXsgZhwmzxm7fh"))
+    # c1.toggleWhitelist(sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR")).run(
+    #     sender=sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"))
 
-    # c1.mint([sp.address("tz1XSBR9VJ1ggCEy9QHkEUXXsgZhwmzxm7fh")]).run(
-    #     sender=sp.address("tz1XSBR9VJ1ggCEy9QHkEUXXsgZhwmzxm7fh"), amount=sp.mutez(20500000))
+    # c1.mint([sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR")]).run(
+    #     sender=sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"), amount=sp.mutez(20500000))
 
     # sc.show(c1.testString())
+
+    c2 = VaultContract(administrators=sp.list([
+        sp.pair(sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"), 5),
+        sp.pair(sp.address("tz1RvzEdTPbT3Y6h1LEjzw6PcVrZoryCHY7S"), 95)
+    ]))
+    #  Below line must be written before contract interaction
+    sc += c2
+
+    sc.show(c2.some_computation(sp.address(
+        "tz1RvzEdTPbT3Y6h1LEjzw6PcVrZoryCHY7S")))
+    sc.show(c2.some_computation(sp.address(
+        "tz1Zn3WK57gjcsk6WH8MD6jf4VEqXuRfgPFM")))
 
 
 # A a compilation target (produces compiled code)
 sp.add_compilation_target("NftWithAdmin_Compiled", NftWithAdmin(
-    admin=sp.address("tz1XSBR9VJ1ggCEy9QHkEUXXsgZhwmzxm7fh"),
+    admin=sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"),
     metadata=sp.utils.metadata_of_url(
         "ipfs://bafkreigb6nsuvwc7vzx6oqzoaeaxno6liyr5rigbheg2ol7ndac75kawoe"
     ),
     token_metadata=[],
+))
+
+# A a compilation target (produces compiled code)
+sp.add_compilation_target("Vault_Compiled", VaultContract(
+    administrators=sp.list([
+        sp.pair(sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"), 5),
+        sp.pair(sp.address("tz1RvzEdTPbT3Y6h1LEjzw6PcVrZoryCHY7S"), 95)
+    ])
 ))
