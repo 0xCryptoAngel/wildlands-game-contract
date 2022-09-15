@@ -1,10 +1,10 @@
 `Compile`
 
-rm compilation -r & ~/smartpy-cli/SmartPy.sh compile result.py compilation
+rm compilation -r & ~/smartpy-cli/SmartPy.sh compile ./contracts/result.py compilation
 
 `Test`
 
-rm output -r & ~/smartpy-cli/SmartPy.sh test result.py output
+rm test -r & ~/smartpy-cli/SmartPy.sh test ./contracts/result.py test
 
 `Deploy`
 
