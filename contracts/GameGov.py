@@ -1,6 +1,7 @@
 import smartpy as sp
 
-NFTandVault = sp.io.import_template("NFTandVault.py")
+NFTandVault = sp.io.import_script_from_url(
+    "https://raw.githubusercontent.com/toptal126/CoC-tezos-p2e-game/e459673b8f9a5a83ba1bd4c2fadd9b99a09b1d87/contracts/NFTandVault.py")
 
 
 FA2 = sp.io.import_script_from_url("https://smartpy.io/templates/fa2_lib.py")
@@ -53,17 +54,32 @@ class NftOwnerCheck:
 
     def is_valid_owner(self, owner, token_id):
         contract = sp.contract(
-            sp.TPair(sp.TList(T_BALANCE_OF_REQUEST), sp.TContract(sp.TList(
-                sp.TRecord(
-                    request=T_BALANCE_OF_REQUEST,
-                    balance=sp.TNat,
-                )))),
+            sp.TRecord(
+                requests=sp.TList(
+                    sp.TRecord(
+                        owner=sp.TAddress,
+                        token_id=sp.TNat
+                    ).layout(("owner", "token_id"))
+                ),
+                callback=sp.TContract(
+                    sp.TList(
+                        sp.TRecord(
+                            request=sp.TRecord(
+                                owner=sp.TAddress,
+                                token_id=sp.TNat
+                            ).layout(("owner", "token_id")),
+                            balance=sp.TNat
+                        ).layout(("request", "balance"))
+                    )
+                )
+            ).layout(("requests", "callback")),
             self.data.nft_contract,
-            "balance_of"
-        ).open_some()
-        sp.transfer(sp.pair([sp.record(owner=owner, token_id=token_id)],
-                            sp.self_entry_point("set_balance_callback")),
-                    sp.tez(0), contract)
+            entry_point="balance_of").open_some()
+        requests = sp.list([sp.record(owner=owner, token_id=token_id)])
+        params = sp.record(callback=sp.self_entry_point(
+            entry_point="set_balance_callback"), requests=requests)
+        sp.transfer(params, sp.mutez(0), contract)
+
         sp.trace(self.data.temp_balances)
 
 
@@ -110,27 +126,32 @@ class GameGov(FA2.Admin, FA2.WithdrawMutez, NftOwnerCheck, ResourceStorage):
 @ sp.add_test(name="Game Gov with Resource manager")
 def test():
     sc = sp.test_scenario()
-
     nft_contract = NFTandVault.NftWithAdmin(
         admin=sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"),
-        metadata={},
+        metadata=sp.utils.metadata_of_url(
+            "ipfs://bafkreigb6nsuvwc7vzx6oqzoaeaxno6liyr5rigbheg2ol7ndac75kawoe"
+        ),
         token_metadata=[],
     )
+
     sc += nft_contract
-    c1.mint([sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR")]).run(
+    print(nft_contract.address)
+    nft_contract.mint(
+        [sp.record(to_=sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"))]
+    ).run(
         sender=sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"), amount=sp.mutez(20500000))
 
-    c1.mint([sp.address("tz1Zn3WK57gjcsk6WH8MD6jf4VEqXuRfgPFM")]).run(
-        sender=sp.address("tz1Zn3WK57gjcsk6WH8MD6jf4VEqXuRfgPFM"), amount=sp.mutez(20500000))
+    # nft_contract.mint([sp.address("tz1Zn3WK57gjcsk6WH8MD6jf4VEqXuRfgPFM")]).run(
+    #     sender=sp.address("tz1Zn3WK57gjcsk6WH8MD6jf4VEqXuRfgPFM"), amount=sp.mutez(20500000))
 
     sc.show(nft_contract.data)
 
     c1 = GameGov(
         admin=sp.address("tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"),
-        nft_contract=sp.address("KT1KFczzgYkxLqTGmhbBvmew12WN3qbkBq4E")
+        nft_contract=nft_contract.address
     )
     sc += c1
-    c1.start_game(10).run(sender=sp.address(
+    c1.start_game(0).run(sender=sp.address(
         "tz1i66XefcqsNVSGa2iFsWb8qxokm3neVpFR"))
     print(c1)
 

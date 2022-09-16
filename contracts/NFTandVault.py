@@ -33,7 +33,6 @@ class MultiAdmin:
         with sp.for_("administrator", self.data.administrators) as administrator:
             with sp.if_(sp.fst(administrator) == sender):
                 result.value = True
-        sp.trace(result.value)
         return result.value
 
     @sp.entry_point
